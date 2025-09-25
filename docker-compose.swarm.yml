@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  swarmapp:
+    image: 146624863550.dkr.ecr.eu-west-1.amazonaws.com/swarmapp:v3
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    ports:
+      - "80:80"
+    environment:
+      - ASPNETCORE_URLS=http://+:80
+      - ASPNETCORE_ENVIRONMENT=Production
+      - AWS_DEFAULT_REGION=eu-west-1
+      - AWS_REGION=eu-west-1
+      - DynamoDBRegion=eu-west-1
+      - FeatureFlags__MySql=false
+      - FeatureFlags__DynamoDB=true
+      - FeatureFlags__UseDynamoDB=false
+      - FeatureFlags__UseS3=true
+      - S3__BucketName=photoboard-uploads-eu-west-1
+      
+    networks:
+      - swarmapp-network
+
+networks:
+  swarmapp-network:
+    driver: overlay
+    attachable: true

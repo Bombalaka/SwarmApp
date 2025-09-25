@@ -1,0 +1,73 @@
+﻿@using Microsoft.AspNetCore.Hosting
+@model IEnumerable<app.Models.Post>
+
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+<div class="dashboard-header">
+    <div class="container">
+        <h1 class="dashboard-title">📱 Your PhotoBoard Dashboard</h1>
+        <p class="mb-0">Discover and share amazing moments</p>
+    </div>
+</div>
+
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">Recent Posts</h2>
+        <a class="btn btn-primary" asp-action="Create">
+            ➕ Create New Post
+        </a>
+    </div>
+
+    @if (Model != null && Model.Any())
+    {
+        <div class="row">
+            @foreach (var item in Model)
+            {
+                <div class="col-md-4 mb-4 slide-up">
+                    <div class="card post-card">
+                        @* Image (safe for null and file existence) *@
+                        @if (!string.IsNullOrWhiteSpace(item.ImagePath))
+                        {
+                            <img class="card-img-top" src="@item.ImagePath" alt="post image" />
+                        }
+                        else
+                        {
+                            <div class="card-img-top d-flex align-items-center justify-content-center bg-light"
+                                style="height: 250px;">
+                                <i style="font-size: 4rem; color: #ccc;">📷</i>
+                            </div>
+                        }
+
+                        <div class="card-body">
+                            <p class="card-text">@item.Content</p>
+
+                            @* Date (safe for null) *@
+                            @{
+                                // If CreatedAt is nullable, fall back to now
+                                var createdAt = item.CreatedAt is DateTime dt ? dt : DateTime.UtcNow;
+                            }
+                            <small class="post-date">
+                                🕒 Posted @createdAt.ToLocalTime().ToString("MMM dd, yyyy 'at' HH:mm")
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="text-center py-5">
+            <div class="mb-4">
+                <i style="font-size: 5rem; color: #ddd;">📷</i>
+            </div>
+            <h3 class="text-muted">No posts yet!</h3>
+            <p class="text-muted mb-4">Start sharing your moments by creating your first post.</p>
+            <a class="btn btn-primary btn-lg" asp-action="Create">
+                🚀 Create Your First Post
+            </a>
+        </div>
+    }
+</div>

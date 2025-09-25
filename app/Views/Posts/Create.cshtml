@@ -1,0 +1,53 @@
+@model app.Models.Post
+@{
+    ViewData["Title"] = "Create Post";
+}
+
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="form-container fade-in">
+                <div class="text-center mb-4">
+                    <h1 class="mb-2">✨ Create New Post</h1>
+                    <p class="text-muted">Share your moment with the world</p>
+                </div>
+
+                <form asp-action="Create" method="post" enctype="multipart/form-data">
+                    <div class="mb-4">
+                        <label asp-for="Content" class="form-label">
+                            💭 What's on your mind?
+                        </label>
+                        <textarea asp-for="Content" class="form-control" rows="4" 
+                                placeholder="Share your thoughts, tell a story, or describe this moment..."></textarea>
+                        <span asp-validation-for="Content" class="text-danger"></span>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label">
+                            📸 Add a Photo (optional)
+                        </label>
+                        <input asp-for="ImageFile" type="file" class="form-control" accept="image/*" />
+                        <div class="form-text">
+                            <small class="text-muted">
+                                📝 Tip: Photos make your posts more engaging! Supported formats: JPG, PNG, GIF
+                            </small>
+                        </div>
+                    </div>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a asp-action="Index" class="btn btn-secondary me-md-2">
+                            ↩️ Back to Dashboard
+                        </a>
+                        <button type="submit" class="btn btn-success">
+                            🚀 Share Post
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts{
+    <partial name="_ValidationScriptsPartial" />
+}
