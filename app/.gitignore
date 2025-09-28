@@ -7,6 +7,8 @@
 .env
 appsettings.json
 appsettings.Development.json
+App-template.yaml
+MySwarm.pem
 
 # User-specific files
 *.rsuser
