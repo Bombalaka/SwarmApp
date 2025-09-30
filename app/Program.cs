@@ -50,12 +50,14 @@ else if (useDynamoDB)
     
     // Get DynamoDB configuration from appsettings.json
     var dynamoDBRegion = builder.Configuration.GetConnectionString("DynamoDBRegion");
+    var dynamoDBTableName = builder.Configuration.GetConnectionString("DynamoDBTableName") ?? "swarmdemo-Posts";
     
     // Configure DynamoDB client for AWS DynamoDB
     Console.WriteLine("☁️ Connecting to AWS DynamoDB");
     var dynamoDBConfig = new AmazonDynamoDBConfig
     {
         RegionEndpoint = Amazon.RegionEndpoint.GetBySystemName(dynamoDBRegion)
+
     };
     
     // Create DynamoDB client
@@ -66,7 +68,7 @@ else if (useDynamoDB)
     builder.Services.AddSingleton<IDynamoDBContext, DynamoDBContext>();
     builder.Services.AddScoped<IPostRepository, PostDynamoRepository>();
     
-    Console.WriteLine($"🔧 DynamoDB table 'Posts' will be created automatically on first use");
+    Console.WriteLine($"🔧 DynamoDB table '{dynamoDBTableName}' will be created automatically on first use");
 }
 else
 {
@@ -112,8 +114,9 @@ if (useMySQL)
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<IAmazonDynamoDB>();
-    await PostDynamoRepository.WaitForTableActiveAsync(context, "Posts");
-    Console.WriteLine("✅ DynamoDB database and tables created successfully!");
+    var tableName = builder.Configuration.GetConnectionString("DynamoDBTableName") ?? "swarmdemo-Posts";
+    await PostDynamoRepository.WaitForTableActiveAsync(context, tableName);
+    Console.WriteLine($"✅ DynamoDB table '{tableName}' ready!");
 }
 
 // Configure the HTTP request pipeline.

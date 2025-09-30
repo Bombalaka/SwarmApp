@@ -1,17 +1,20 @@
 #!/bin/bash
-
+export MSYS_NO_PATHCONV=1
 # Docker Swarm Deployment Script for SwarmApp
 # Usage: ./deploy-swarm.sh [image_tag] [environment] [replicas]
 # Example: ./deploy-swarm.sh latest production 3
 
 set -e
 
-# ⚠️ IMPORTANT: Replace these with your actual values
-ECR_REGISTRY="146624863550.dkr.ecr.eu-west-1.amazonaws.com"  # Replace with YOUR account ID and region
-IMAGE_NAME="swarmapp"  # Replace with YOUR ECR repository name
-AWS_REGION="eu-west-1"  # Replace with YOUR AWS region
+# Get values from CloudFormation-created SSM parameters
+echo "📡 Getting configuration from SSM..."
+ECR_URI=$(aws ssm get-parameter --name "/swarmapp/ecr/repository-uri" --query "Parameter.Value" --output text)
+ECR_REGISTRY=$(echo $ECR_URI | cut -d'/' -f1)
+S3_BUCKET=$(aws ssm get-parameter --name "/swarmapp/s3/bucket-name" --query "Parameter.Value" --output text)
+AWS_REGION="eu-west-1"
 
-# Parameters (with better defaults)
+# Parameters 
+IMAGE_NAME="swarmapp"
 IMAGE_TAG=${1:-v3}
 ENVIRONMENT=${2:-Production}
 REPLICAS=${3:-2}
@@ -69,14 +72,15 @@ services:
     environment:
       - ASPNETCORE_URLS=http://+:80
       - ASPNETCORE_ENVIRONMENT=${ENVIRONMENT}
+      - DetailedErrors=true
       - AWS_DEFAULT_REGION=${AWS_REGION}
       - AWS_REGION=${AWS_REGION}
       - DynamoDBRegion=${AWS_REGION}
       - FeatureFlags__MySql=false
       - FeatureFlags__DynamoDB=true
-      - FeatureFlags__UseDynamoDB=false
+      - FeatureFlags__UseDynamoDB=true
       - FeatureFlags__UseS3=true
-      - S3__BucketName=photoboard-uploads-eu-west-1
+      - S3__BucketName=${S3_BUCKET}
 
       
     networks:
@@ -120,4 +124,4 @@ echo ""
 echo "🎯 Useful commands:"
 echo "   Check nodes: docker node ls"
 echo "   Check where containers run: docker service ps swarmapp_swarmapp"
-echo "   Remove stack: docker stack rm SwarmApp"
+echo "   Remove stack: docker stack rm swarmApp"

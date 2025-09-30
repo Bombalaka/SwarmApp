@@ -13,12 +13,13 @@ public class PostDynamoRepository : IPostRepository
 {
     private readonly IDynamoDBContext _dynamoDbContext;
     private readonly IAmazonDynamoDB _dynamoDBClient;
-    private const string TableName = "Posts";
+    private readonly string _tableName;
 
-    public PostDynamoRepository(IDynamoDBContext dynamoDbContext, IAmazonDynamoDB dynamoDBClient)
+    public PostDynamoRepository(IDynamoDBContext dynamoDbContext, IAmazonDynamoDB dynamoDBClient, IConfiguration configuration)
     {
         _dynamoDbContext = dynamoDbContext;
         _dynamoDBClient = dynamoDBClient;
+        _tableName = configuration["DynamoDB:TableName"] ?? "swarmdemo-Posts";
         EnsureTableExistsAsync().Wait();
     }
 
@@ -26,15 +27,15 @@ public class PostDynamoRepository : IPostRepository
     {
         try
         {
-            await _dynamoDBClient.DescribeTableAsync(TableName);
-            Console.WriteLine($"✅ DynamoDB table '{TableName}' exists");
+            await _dynamoDBClient.DescribeTableAsync(_tableName);
+            Console.WriteLine($"✅ DynamoDB table '{_tableName}' exists");
         }
         catch (ResourceNotFoundException)
         {
-            Console.WriteLine($"🔧 Creating DynamoDB table '{TableName}'");
+            Console.WriteLine($"🔧 Creating DynamoDB table '{_tableName}'");
             var request = new CreateTableRequest
             {
-                TableName = TableName,
+                TableName = _tableName,
                 KeySchema = new List<KeySchemaElement>
                 {
                     new KeySchemaElement
@@ -55,20 +56,30 @@ public class PostDynamoRepository : IPostRepository
             };
 
             await _dynamoDBClient.CreateTableAsync(request);
-            Console.WriteLine($"✅ DynamoDB table '{TableName}' created successfully");
+            Console.WriteLine($"✅ DynamoDB table '{_tableName}' created successfully");
         }
     }
 
     public async Task<IEnumerable<Post>> GetAllAsync()
     {
         var scanConditions = new List<ScanCondition>();
-        var posts = await _dynamoDbContext.ScanAsync<Post>(scanConditions).GetRemainingAsync();
+        var operationConfig = new DynamoDBOperationConfig
+        {
+            OverrideTableName = _tableName
+        };
+
+        var posts = await _dynamoDbContext.ScanAsync<Post>(scanConditions, operationConfig).GetRemainingAsync();
         return posts;
     }
 
     public async Task<Post?> GetByIdAsync(string id)
     {
-        var post = await _dynamoDbContext.LoadAsync<Post>(id);
+        
+        var operationConfig = new DynamoDBOperationConfig
+        {
+            OverrideTableName = _tableName
+        };
+        var post = await _dynamoDbContext.LoadAsync<Post>(id, operationConfig);
         return post;
     }
 
@@ -80,8 +91,12 @@ public class PostDynamoRepository : IPostRepository
 
         post.CreatedAt = DateTime.UtcNow;
         post.UpdatedAt = DateTime.UtcNow;
+        var operationConfig = new DynamoDBOperationConfig
+        {
+            OverrideTableName = _tableName
+        };
 
-        await _dynamoDbContext.SaveAsync(post);
+        await _dynamoDbContext.SaveAsync(post, operationConfig);
         return post;
     }
 
@@ -95,8 +110,12 @@ public class PostDynamoRepository : IPostRepository
             existingPost.Content = post.Content;
             existingPost.ImagePath = post.ImagePath;
             existingPost.UpdatedAt = DateTime.UtcNow;
+            var operationConfig = new DynamoDBOperationConfig
+            {
+                OverrideTableName = _tableName
+            };
 
-            await _dynamoDbContext.SaveAsync(existingPost);
+            await _dynamoDbContext.SaveAsync(existingPost, operationConfig);
         }
         return existingPost;
     }
@@ -106,7 +125,11 @@ public class PostDynamoRepository : IPostRepository
         var post = await GetByIdAsync(id);
         if (post != null)
         {
-            await _dynamoDbContext.DeleteAsync<Post>(id);
+            var operationConfig = new DynamoDBOperationConfig
+            {
+                OverrideTableName = _tableName
+            };
+            await _dynamoDbContext.DeleteAsync<Post>(id, operationConfig);
         }
         return post;
     }
