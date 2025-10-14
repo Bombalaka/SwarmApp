@@ -33,3 +33,5 @@ services:
 
 volumes:
   db_data:
+# This file used for local testing with docker-compose
+# Use docker-compose.swarm.yml for AWS deployment with ECS. See Readme for details.
