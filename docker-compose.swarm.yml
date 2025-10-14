@@ -29,14 +29,14 @@ services:
       - ASPNETCORE_URLS=http://+:80
       - ASPNETCORE_ENVIRONMENT=Production
       - DetailedErrors=true
-      - AWS_DEFAULT_REGION=eu-west-1
-      - AWS_REGION=eu-west-1
-      - DynamoDBRegion=eu-west-1
+      - AWS_DEFAULT_REGION=$AWS_REGION
+      - AWS_REGION=$AWS_REGION
+      - DynamoDBRegion=$AWS_REGION
       - FeatureFlags__MySql=false
       - FeatureFlags__DynamoDB=true
       - FeatureFlags__UseDynamoDB=true
       - FeatureFlags__UseS3=true
-      - S3__BucketName=swarmdemo-photo-uploads
+      - S3__BucketName=$S3_BUCKET
       
     networks:
       - swarmapp-network

@@ -1,0 +1,522 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  This template creates a new AWS CloudFormation stack for the SwarmApp, using aws iam role and policies to access the resources, 
+  ecr for image storage, dynamodb for database, s3 for image storage, and ssm for secrets management and docker swarm for manager and worker nodes.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "My VPC ID, default vpc because I created it already so we don't need to create a new one"
+    Default: #your vpc id
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: "My Subnet ID 1"
+    Default: #your subnet id
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: "My Subnet ID 2"
+    Default: #your subnet id
+  Subnet3:
+    Type: AWS::EC2::Subnet::Id
+    Description: "My Subnet ID 3"
+    Default: #your subnet id
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Description: "My Image ID, Amazon Linux 2023"
+    Default: ami-091a906f2e1e40076
+  InstanceType:
+    Type: String
+    Description: "My Instance Type, this time we uset3.small"
+    Default: t3.small
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: "Get a key pair"
+    Default: #your key pair name
+
+Resources:
+  #Application load balancer security group
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: ALB-SG
+      GroupDescription: Security group for Application Load Balancer
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        # Allow HTTP from anywhere
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP from internet
+      SecurityGroupEgress:
+        # Allow all outbound traffic and database ,s3
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: ALB-SG
+
+  # Docker Swarm Security Group
+  DockerSwarmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: dockerswarm-sg
+      GroupDescription: Security group for Docker Swarm cluster nodes
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Allow HTTP from ALB
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0 # Allows access from anywhere
+          Description: Allow HTTP from internet
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH from anywhere (remove in production)
+        # Self-referencing rules (Docker Swarm ports) are defined separately below
+        # to avoid circular dependency issues
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: dockerswarm-sg
+
+  # REQUIRED to be separate because the security group references ITSELF
+  DockerSwarmIngressTCP2377:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DockerSwarmSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2377
+      ToPort: 2377
+      SourceSecurityGroupId: !Ref DockerSwarmSecurityGroup
+      Description: Docker Swarm cluster management
+
+  DockerSwarmIngressTCP7946:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DockerSwarmSecurityGroup
+      IpProtocol: tcp
+      FromPort: 7946
+      ToPort: 7946
+      SourceSecurityGroupId: !Ref DockerSwarmSecurityGroup
+      Description: Docker Swarm node discovery (TCP)
+
+  DockerSwarmIngressUDP7946:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DockerSwarmSecurityGroup
+      IpProtocol: udp
+      FromPort: 7946
+      ToPort: 7946
+      SourceSecurityGroupId: !Ref DockerSwarmSecurityGroup
+      Description: Docker Swarm node discovery (UDP)
+
+  DockerSwarmIngressUDP4789:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DockerSwarmSecurityGroup
+      IpProtocol: udp
+      FromPort: 4789
+      ToPort: 4789
+      SourceSecurityGroupId: !Ref DockerSwarmSecurityGroup
+      Description: Docker Swarm overlay network
+
+  # IAM roles
+  SwarmAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-SwarmAppRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # AWS Managed Policies
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+      Policies:
+        # SSM Policy (from SwarmAppSSMPolicy)
+        - PolicyName: SwarmAppSSMPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - ssm:DescribeParameters
+                  - ssm:PutParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/swarmapp/*"
+
+  # Instance Profile for EC2 instances to use the above role
+  SwarmAppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${AWS::StackName}-SwarmAppInstanceProfile"
+      Roles:
+        - !Ref SwarmAppRole
+
+  # Create ECR Repository
+  SwarmAppECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: "swarmapp"
+      EmptyOnDelete: true
+
+  # Create S3 Bucket
+  SwarmAppS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-photo-uploads"
+      #add public acces configuration
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        #add CORS configuration
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - "*"
+            MaxAge: 3000
+      
+
+  SwarmAppS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SwarmAppS3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${SwarmAppS3Bucket.Arn}/*"
+
+  SwarmAppS3Policy:
+    Type: AWS::IAM::Policy
+    DependsOn:
+      - SwarmAppS3Bucket
+      - SwarmAppManagerInstance
+      - SwarmAppWorkerAutoScalingGroup
+    Properties:
+      PolicyName: S3PhotoUploadPolicy
+      Roles:
+        - !Ref SwarmAppRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+            Resource: !Sub "${SwarmAppS3Bucket.Arn}/*"
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource: !GetAtt SwarmAppS3Bucket.Arn
+
+  #SSm parameter that will auto created when stack is created
+  SwarmAppECRParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: "/swarmapp/ecr/repository-uri"
+      Type: String
+      Value: !GetAtt SwarmAppECRRepository.RepositoryUri
+
+  #SSM S3 Parameter
+  SwarmAppS3Parameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: "/swarmapp/s3/bucket-name"
+      Type: String
+      Value: !Ref SwarmAppS3Bucket
+
+  #create DynamoDB table
+  SwarmAppDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Posts"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: "Id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "Id"
+          KeyType: "HASH"
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: "Name"
+          Value: "Posts"
+
+  # store table name in ssm parameter
+  SwarmAppDynamoDBParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: "/swarmapp/dynamodb/table-name"
+      Type: String
+      Value: !Ref SwarmAppDynamoDBTable
+
+  #Create EC2 Instance for Docker Swarm Manager Node
+  SwarmAppManagerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref ImageId
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref DockerSwarmSecurityGroup
+      SubnetId: !Ref Subnet1
+      IamInstanceProfile: !Ref SwarmAppInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          dnf update -y
+          dnf install -y docker awscli
+          systemctl enable docker
+          systemctl start docker
+          usermod -aG docker ec2-user || true
+
+          REGION="${AWS::Region}"
+          PARAM_IP="/swarmapp/swarm/manager-ip"
+          PARAM_TOKEN="/swarmapp/swarm/join-token"
+
+          # get private ip (IMDSv2)
+          echo "Getting instance private IP..."
+          IMDS_TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || true)
+          private_ip=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
+            http://169.254.169.254/latest/meta-data/local-ipv4)
+
+          # wait for docker to be ready
+          for i in {1..20}; do docker info >/dev/null 2>&1 && break; sleep 1; done
+
+          # init swarm
+          if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
+            docker swarm init --advertise-addr "$private_ip"
+          fi
+
+          worker_token=$(docker swarm join-token -q worker)
+
+          aws ssm put-parameter --name "$PARAM_IP"    --type String --value "$private_ip"   --overwrite --region "$REGION"
+          aws ssm put-parameter --name "$PARAM_TOKEN" --type String --value "$worker_token" --overwrite --region "$REGION"
+
+          echo "manager ready: $private_ip" > /root/manager-ready.txt
+
+  #Launch template for Docker Swarm Worker Nodes
+  SwarmAppWorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: "SwarmAppWorker"
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: !Ref ImageId
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref DockerSwarmSecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt SwarmAppInstanceProfile.Arn
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+
+            # Install Docker + AWS CLI
+            dnf update -y
+            dnf install -y docker awscli
+            systemctl enable docker
+            systemctl start docker
+            usermod -aG docker ec2-user || true
+
+            REGION="${AWS::Region}"
+            PARAM_IP="/swarmapp/swarm/manager-ip"
+            PARAM_TOKEN="/swarmapp/swarm/join-token"
+
+            # Wait for Docker to be ready
+            for i in {1..20}; do
+              if docker info >/dev/null 2>&1; then break; fi
+              sleep 1
+            done
+
+            # Try to read manager IP + token from SSM (retry up to ~5 min)
+            for i in {1..30}; do
+              set +e # allow commands to fail
+              manager_ip=$(aws ssm get-parameter --name "$PARAM_IP"    --query "Parameter.Value" --output text --region "$REGION")
+              token=$(aws ssm get-parameter --name "$PARAM_TOKEN" --query "Parameter.Value" --output text --region "$REGION")
+              rc=$?
+              set -e # fail if any command fails
+              if [ "$rc" -eq 0 ] && [ -n "$manager_ip" ] && [ -n "$token" ]; then
+                break
+              fi
+              echo "waiting for manager params... ($i/30)"; sleep 10
+            done
+
+            # If still missing, fail clearly (ASG will try again)
+            if [ -z "$manager_ip" ] || [ -z "$token" ]; then
+              echo "ERROR: manager_ip or token missing from SSM" | tee /root/worker-error.txt
+              exit 1
+            fi
+
+            # Join swarm (only if not already joined)
+            if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
+              docker swarm join --token "$token" "$manager_ip:2377"
+            fi
+
+            echo "worker joined $manager_ip" > /root/worker-joined.txt
+
+  #Create Auto Scaling Group for Docker Swarm Worker Nodes
+  SwarmAppWorkerAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: SwarmAppManagerInstance
+    Properties:
+      AutoScalingGroupName: !Sub "${AWS::StackName}-SwarmAppWorker"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref SwarmAppWorkerLaunchTemplate
+        Version: !GetAtt SwarmAppWorkerLaunchTemplate.LatestVersionNumber
+      MinSize: 2
+      MaxSize: 4
+      DesiredCapacity: 2
+      VPCZoneIdentifier:
+        - !Ref Subnet1
+        - !Ref Subnet2
+        - !Ref Subnet3
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 600
+      TargetGroupARNs:
+        - !Ref SwarmAppLoadBalancerTargetGroup
+      Tags:
+        - Key: "Name"
+          Value: "SwarmAppWorkerASG"
+          PropagateAtLaunch: false
+
+  SwarmAppScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref SwarmAppWorkerAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 70.0
+
+  #Create Load Balancer for Docker Swarm Manager Nodes
+  SwarmAppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AWS::StackName}-SwarmAppLoadBalancer"
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Ref Subnet1
+        - !Ref Subnet2
+        - !Ref Subnet3
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: "Name"
+          Value: "SwarmAppLoadBalancer"
+
+  #Create Load Balancer Target Group for Docker Swarm Manager Nodes
+  SwarmAppLoadBalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${AWS::StackName}-SwarmAppTG"
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30 # Check every 10 minutes
+      HealthCheckTimeoutSeconds: 10 # Wait 10 seconds for response (increased from 5)
+      HealthyThresholdCount: 2 # Need 2 successful checks to be "healthy"
+      UnhealthyThresholdCount: 5 # Need 5 failed checks to be "unhealthy" (increased from 3)
+      Tags:
+        - Key: "Name"
+          Value: "SwarmAppLoadBalancerTargetGroup"
+
+  #Create Load Balancer Listener for Docker Swarm Manager Nodes
+  SwarmAppLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref SwarmAppLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref SwarmAppLoadBalancerTargetGroup
+
+  # output for the stack
+Outputs:
+  SwarmAppManagerInstancePublicIP:
+    Description: "Public IP of the Swarm App Manager Instance"
+    Value: !GetAtt SwarmAppManagerInstance.PublicIp
+    Export:
+      Name: !Sub "${AWS::StackName}-ManagerPublicIP"
+
+  SwarmAppManagerInstancePrivateIP:
+    Description: "Private IP of the Swarm App Manager Instance"
+    Value: !GetAtt SwarmAppManagerInstance.PrivateIp
+    Export:
+      Name: !Sub "${AWS::StackName}-ManagerPrivateIP"
+
+  SwarmAppLoadBalancerPublicDNS:
+    Description: "Public DNS of the Swarm App Load Balancer - Use this to access your application"
+    Value: !GetAtt SwarmAppLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-LoadBalancerDNS"
+
+  SwarmAppECRRepositoryUri:
+    Description: "ECR Repository URI for SwarmApp"
+    Value: !GetAtt SwarmAppECRRepository.RepositoryUri
+    Export:
+      Name: !Sub "${AWS::StackName}-ECRRepositoryUri"
+
+  SwarmAppS3BucketName:
+    Description: "S3 Bucket Name for photo uploads"
+    Value: !Ref SwarmAppS3Bucket
+    Export:
+      Name: !Sub "${AWS::StackName}-S3BucketName"
+
+  SwarmAppDynamoDBTableName:
+    Description: "DynamoDB Table Name for Posts"
+    Value: !Ref SwarmAppDynamoDBTable
+    Export:
+      Name: !Sub "${AWS::StackName}-DynamoDBTableName"

@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Build and Push to ECR Script
-# Usage: ./build-and-push.sh [tag]
 
 set -e
 

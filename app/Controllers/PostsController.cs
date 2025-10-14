@@ -18,18 +18,18 @@ public class PostsController : Controller
         _postRepository = postRepository;
         _imageStorage = imageStorage;
     }
-     public async Task<IActionResult> Index()
-        {
-            var posts = await _postRepository.GetAllAsync();
-            return View(posts);
-        }
+    public async Task<IActionResult> Index()
+    {
+        var posts = await _postRepository.GetAllAsync();
+        return View(posts);
+    }
 
-        [HttpGet]
-        public IActionResult Create() => View(new Post());
+    [HttpGet]
+    public IActionResult Create() => View(new Post());
 
-        [HttpPost]
-        [ValidateAntiForgeryToken]
-       public async Task<IActionResult> Create(Post model)
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Create(Post model)
     {
         if (!ModelState.IsValid) return View(model);
 
@@ -43,13 +43,13 @@ public class PostsController : Controller
 
         var post = new Post
         {
-            Title     = model.Title,
-            Content   = model.Content,
+            Title = model.Title,
+            Content = model.Content,
             ImagePath = imageUrl
         };
 
         await _postRepository.CreateAsync(post);
         return RedirectToAction(nameof(Index));
     }
-    
+
 }

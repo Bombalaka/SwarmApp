@@ -1,8 +1,7 @@
 #!/bin/bash
-export MSYS_NO_PATHCONV=1
-# Docker Swarm Deployment Script for SwarmApp
-# Usage: ./deploy-swarm.sh [image_tag] [environment] [replicas]
-# Example: ./deploy-swarm.sh latest production 3
+
+export MSYS_NO_PATHCONV=1 # This is to prevent path conversion issues on Windows
+
 
 set -e
 
